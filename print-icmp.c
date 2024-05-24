@@ -58,6 +58,11 @@ struct icmp {
 			nd_uint16_t icd_seq;
 		} ih_idseq;
 		nd_uint32_t ih_void;
+		struct ih_reconfig {
+				uint16_t dst_id;
+				uint8_t src_port;
+				uint8_t dst_port;
+		} reconfig_newconfig;
 	} icmp_hun;
 #define	icmp_pptr	icmp_hun.ih_pptr
 #define	icmp_gwaddr	icmp_hun.ih_gwaddr
@@ -126,7 +131,7 @@ struct icmp {
 #define		ICMP_REDIRECT_TOSNET	2		/* for tos and net */
 #define		ICMP_REDIRECT_TOSHOST	3		/* for tos and host */
 #define	ICMP_ECHO		8		/* echo service */
-#define	ICMP_ROUTERADVERT	9		/* router advertisement */
+#define	ICMP_RECONFIG_NOTI	9		/* router advertisement */
 #define	ICMP_ROUTERSOLICIT	10		/* router solicitation */
 #define	ICMP_TIMXCEED		11		/* time exceeded, code: */
 #define		ICMP_TIMXCEED_INTRANS	0		/* ttl==0 in transit */
@@ -712,55 +717,38 @@ icmp_print(netdissect_options *ndo, const u_char *bp, u_int plen,
 		}
 		break;
 
-	case ICMP_ROUTERADVERT:
+	case ICMP_RECONFIG_NOTI:
 	    {
 		char *cp;
-		const struct ih_rdiscovery *ihp;
-		const struct id_rdiscovery *idp;
-		u_int lifetime, num, size;
+		u_int dst_id, src_port, dst_port;
 
-		(void)snprintf(buf, sizeof(buf), "router advertisement");
+		(void)snprintf(buf, sizeof(buf), "Reconfigure Notification: \n");
 		cp = buf + strlen(buf);
 
-		ihp = (const struct ih_rdiscovery *)&dp->icmp_void;
-		(void)strncpy(cp, " lifetime ", sizeof(buf) - (cp - buf));
+		(void)strncpy(cp, " reconfiguration ", sizeof(buf) - (cp - buf));
 		cp = buf + strlen(buf);
-		lifetime = GET_BE_U_2(ihp->ird_lifetime);
-		if (lifetime < 60) {
-			(void)snprintf(cp, sizeof(buf) - (cp - buf), "%u",
-			    lifetime);
-		} else if (lifetime < 60 * 60) {
-			(void)snprintf(cp, sizeof(buf) - (cp - buf), "%u:%02u",
-			    lifetime / 60, lifetime % 60);
-		} else {
-			(void)snprintf(cp, sizeof(buf) - (cp - buf),
-			    "%u:%02u:%02u",
-			    lifetime / 3600,
-			    (lifetime % 3600) / 60,
-			    lifetime % 60);
+		if (icmp_code == 0) {
+			(void)snprintf(cp, sizeof(buf) - (cp - buf), "started, ");
+		}
+		else if (icmp_code == 1) {
+			(void)snprintf(cp, sizeof(buf) - (cp - buf), "finished, ");
+		}
+		else {
+			(void)snprintf(cp, sizeof(buf) - (cp - buf), "code undefined, ");
 		}
 		cp = buf + strlen(buf);
 
-		num = GET_U_1(ihp->ird_addrnum);
-		(void)snprintf(cp, sizeof(buf) - (cp - buf), " %u:", num);
+		dst_id = GET_BE_U_2(&dp->icmp_hun.reconfig_newconfig.dst_id);
+			(void)snprintf(cp, sizeof(buf) - (cp - buf), "destination: %u, ", dst_id);
 		cp = buf + strlen(buf);
+		src_port = dp->icmp_hun.reconfig_newconfig.src_port;
+		(void)snprintf(cp, sizeof(buf) - (cp - buf), "source interface affected: %u", src_port);
+		cp = buf + strlen(buf);
+		// dst_port = dp->icmp_hun.reconfig_newconfig.dst_id;
+		// (void)snprintf(cp, sizeof(buf) - (cp - buf), "destination: %u, ", dst_id);
+		// cp = buf + strlen(buf);
+			}
 
-		size = GET_U_1(ihp->ird_addrsiz);
-		if (size != 2) {
-			(void)snprintf(cp, sizeof(buf) - (cp - buf),
-			    " [size %u]", size);
-			break;
-		}
-		idp = (const struct id_rdiscovery *)&dp->icmp_data;
-		while (num != 0) {
-			(void)snprintf(cp, sizeof(buf) - (cp - buf), " {%s %u}",
-			    GET_IPADDR_STRING(idp->ird_addr),
-			    GET_BE_U_4(idp->ird_pref));
-			cp = buf + strlen(buf);
-			++idp;
-			num--;
-		}
-	    }
 		break;
 
 	case ICMP_TIMXCEED:
