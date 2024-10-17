@@ -71,6 +71,16 @@ darwin*)
 	;;
 esac
 
+#
+# Do we have pkg-config?
+#
+PKG_PROG_PKG_CONFIG
+
+#
+# Do we have the brew command from Homebrew?
+#
+AC_PATH_PROG([BREW], [brew])
+
 AC_ARG_WITH([smi],
    [AS_HELP_STRING([--with-smi],
      [link with libsmi (allows to load MIBs on the fly to decode SNMP packets) [default=yes, if available]])],
@@ -274,9 +284,11 @@ else
 fi
 
 #
-# We must check this before checking whether to check the OS's IPv6,
-# support because, on some platforms (such as SunOS 5.x), the test
-# program requires the extra networking libraries.
+# XXX - we used to check this before checking whether to check the OS's
+# IPv6, support because, on some platforms (such as SunOS 5.x), the test
+# program requires the extra networking libraries.  We no longer
+# test for IPv6 support, we just assume it's present with the
+# standard API, so perhaps this can be moved.
 #
 AC_LBL_LIBRARY_NET
 
@@ -377,35 +389,6 @@ AC_LBL_LIBPCAP(V_PCAPDEP, V_INCLS)
 # Before you is a C compiler.
 #
 AC_CHECK_FUNCS(ether_ntohost, [
-    AC_CACHE_CHECK(for buggy ether_ntohost, ac_cv_buggy_ether_ntohost, [
-	AC_RUN_IFELSE([AC_LANG_SOURCE([[
-		#include <netdb.h>
-		#include <netinet/ether.h>
-		#include <stdlib.h>
-		#include <sys/types.h>
-		#include <sys/param.h>
-		#include <sys/socket.h>
-
-		int
-		main(int argc, char **argv)
-		{
-			u_char ea[6] = { 0xff, 0xff, 0xff, 0xff, 0xff };
-			char name[MAXHOSTNAMELEN];
-
-			ether_ntohost(name, (struct ether_addr *)ea);
-			exit(0);
-		}
-	]])
-	], [ac_cv_buggy_ether_ntohost=no],
-	   [ac_cv_buggy_ether_ntohost=yes],
-	   [ac_cv_buggy_ether_ntohost="not while cross-compiling"])])
-    if test "$ac_cv_buggy_ether_ntohost" = "no"; then
-	AC_DEFINE(USE_ETHER_NTOHOST, 1,
-	    [define if you have ether_ntohost() and it works])
-    fi
-])
-if test "$ac_cv_func_ether_ntohost" = yes -a \
-    "$ac_cv_buggy_ether_ntohost" = "no"; then
 	#
 	# OK, we have ether_ntohost().  Is it declared in <net/ethernet.h>?
 	#
@@ -414,7 +397,7 @@ if test "$ac_cv_func_ether_ntohost" = yes -a \
 	#
 	AC_CHECK_DECL(ether_ntohost,
 	    [
-		AC_DEFINE(NET_ETHERNET_H_DECLARES_ETHER_NTOHOST,,
+		AC_DEFINE(NET_ETHERNET_H_DECLARES_ETHER_NTOHOST,1,
 		    [Define to 1 if net/ethernet.h declares `ether_ntohost'])
 	    ],,
 	    [
@@ -462,7 +445,7 @@ if test "$ac_cv_func_ether_ntohost" = yes -a \
 		unset ac_cv_have_decl_ether_ntohost
 		AC_CHECK_DECL(ether_ntohost,
 		    [
-			AC_DEFINE(SYS_ETHERNET_H_DECLARES_ETHER_NTOHOST,,
+			AC_DEFINE(SYS_ETHERNET_H_DECLARES_ETHER_NTOHOST,1,
 			    [Define to 1 if sys/ethernet.h declares `ether_ntohost'])
 		    ],,
 		    [
@@ -489,7 +472,7 @@ if test "$ac_cv_func_ether_ntohost" = yes -a \
 		unset ac_cv_have_decl_ether_ntohost
 		AC_CHECK_DECL(ether_ntohost,
 		    [
-			AC_DEFINE(ARPA_INET_H_DECLARES_ETHER_NTOHOST,,
+			AC_DEFINE(ARPA_INET_H_DECLARES_ETHER_NTOHOST,1,
 			    [Define to 1 if arpa/inet.h declares `ether_ntohost'])
 		    ],,
 		    [
@@ -517,7 +500,7 @@ if test "$ac_cv_func_ether_ntohost" = yes -a \
 		unset ac_cv_have_decl_ether_ntohost
 		AC_CHECK_DECL(ether_ntohost,
 		    [
-			AC_DEFINE(NETINET_IF_ETHER_H_DECLARES_ETHER_NTOHOST,,
+			AC_DEFINE(NETINET_IF_ETHER_H_DECLARES_ETHER_NTOHOST,1,
 			    [Define to 1 if netinet/if_ether.h declares `ether_ntohost'])
 		    ],,
 		    [
@@ -552,7 +535,91 @@ if test "$ac_cv_func_ether_ntohost" = yes -a \
 			#include <netinet/if_ether.h>
 		    ])
 	fi
-fi
+    AC_CACHE_CHECK(for buggy ether_ntohost, ac_cv_buggy_ether_ntohost, [
+	AC_RUN_IFELSE([AC_LANG_SOURCE([[
+  #include <netdb.h>
+  #if defined(NET_ETHERNET_H_DECLARES_ETHER_NTOHOST)
+    /*
+     * OK, just include <net/ethernet.h>.
+     */
+    #include <net/ethernet.h>
+  #elif defined(NETINET_ETHER_H_DECLARES_ETHER_NTOHOST)
+    /*
+     * OK, just include <netinet/ether.h>
+     */
+    #include <netinet/ether.h>
+  #elif defined(SYS_ETHERNET_H_DECLARES_ETHER_NTOHOST)
+    /*
+     * OK, just include <sys/ethernet.h>
+     */
+    #include <sys/ethernet.h>
+  #elif defined(ARPA_INET_H_DECLARES_ETHER_NTOHOST)
+    /*
+     * OK, just include <arpa/inet.h>
+     */
+    #include <arpa/inet.h>
+  #elif defined(NETINET_IF_ETHER_H_DECLARES_ETHER_NTOHOST)
+    /*
+     * OK, include <netinet/if_ether.h>, after all the other stuff we
+     * need to include or define for its benefit.
+     */
+    #define NEED_NETINET_IF_ETHER_H
+  #else
+    /*
+     * We'll have to declare it ourselves.
+     * If <netinet/if_ether.h> defines struct ether_addr, include
+     * it.  Otherwise, define it ourselves.
+     */
+    #ifdef HAVE_STRUCT_ETHER_ADDR
+      #define NEED_NETINET_IF_ETHER_H
+    #else /* HAVE_STRUCT_ETHER_ADDR */
+	struct ether_addr {
+		/* Beware FreeBSD calls this "octet". */
+		unsigned char ether_addr_octet[MAC_ADDR_LEN];
+	};
+    #endif /* HAVE_STRUCT_ETHER_ADDR */
+  #endif /* what declares ether_ntohost() */
+
+  #ifdef NEED_NETINET_IF_ETHER_H
+    /*
+     * Include diag-control.h before <net/if.h>, which too defines a macro
+     * named ND_UNREACHABLE.
+     */
+    #include "diag-control.h"
+    #include <net/if.h>		/* Needed on some platforms */
+    #include <netinet/in.h>	/* Needed on some platforms */
+    #include <netinet/if_ether.h>
+  #endif /* NEED_NETINET_IF_ETHER_H */
+
+  #ifndef HAVE_DECL_ETHER_NTOHOST
+    /*
+     * No header declares it, so declare it ourselves.
+     */
+    extern int ether_ntohost(char *, const struct ether_addr *);
+  #endif /* !defined(HAVE_DECL_ETHER_NTOHOST) */
+  #include <stdlib.h>
+  #include <sys/types.h>
+  #include <sys/param.h>
+  #include <sys/socket.h>
+
+  int
+  main(int argc, char **argv)
+  {
+    u_char ea[6] = { 0xff, 0xff, 0xff, 0xff, 0xff };
+    char name[MAXHOSTNAMELEN];
+
+    ether_ntohost(name, (struct ether_addr *)ea);
+    exit(0);
+  }
+	]])
+	], [ac_cv_buggy_ether_ntohost=no],
+	   [ac_cv_buggy_ether_ntohost=yes],
+	   [ac_cv_buggy_ether_ntohost="not while cross-compiling"])])
+    if test "$ac_cv_buggy_ether_ntohost" = "no"; then
+	AC_DEFINE(USE_ETHER_NTOHOST, 1,
+	    [define if you have ether_ntohost() and it works])
+    fi
+])
 
 #
 # Do we have the new open API?  Check for pcap_create, and assume that,
@@ -580,7 +647,14 @@ AC_CHECK_FUNCS(pcap_set_tstamp_precision)
 # if we have them.
 #
 AC_CHECK_FUNCS(pcap_set_immediate_mode pcap_dump_ftell64)
-AC_CHECK_FUNCS(pcap_open pcap_findalldevs_ex)
+#
+# See the comment in AC_LBL_LIBPCAP in aclocal.m4 for the reason
+# why we don't check for remote-capture APIs if we're building
+# with the system libpcap on macOS.
+#
+if test "$_dont_check_for_remote_apis" != "yes"; then
+	AC_CHECK_FUNCS(pcap_open pcap_findalldevs_ex)
+fi
 
 #
 # Check for special debugging functions
@@ -730,13 +804,6 @@ AC_ARG_WITH(crypto,
 		want_libcrypto=yes
 		libcrypto_root=$withval
 		AC_MSG_RESULT([yes, using the version installed in $withval])
-
-		#
-		# Put the subdirectories of the libcrypto root directory
-		# at the front of the header and library search path.
-		#
-		CFLAGS="-I$withval/include $CFLAGS"
-		LIBS="-L$withval/lib $LIBS"
 	fi
 ],[
 	#
@@ -748,42 +815,216 @@ AC_ARG_WITH(crypto,
 ])
 if test "$want_libcrypto" != "no"; then
 	#
-	# Don't check for libcrypto unless we have its headers;
-	# Apple, bless their pointy little heads, apparently ship
-	# libcrypto as a library, but not the header files, in
-	# El Capitan, probably because they don't want you writing
-	# nasty portable code that could run on other UN*Xes, they
-	# want you writing code that uses their Shiny New Crypto
-	# Library and that only runs on macOS.
+	# Were we told where to look for libcrypto?
 	#
-	AC_CHECK_HEADER(openssl/crypto.h,
-	[
-		AC_CHECK_LIB(crypto, DES_cbc_encrypt)
-		if test "$ac_cv_lib_crypto_DES_cbc_encrypt" = "yes"; then
-			AC_CHECK_HEADERS(openssl/evp.h)
-			#
-			# OK, then:
-			#
-			# 1) do we have EVP_CIPHER_CTX_new?
-			# If so, we use it to allocate an
-			# EVP_CIPHER_CTX, as EVP_CIPHER_CTX may be
-			# opaque; otherwise, we allocate it ourselves.
-			#
-			# 2) do we have EVP_DecryptInit_ex()?
-			# If so, we use it, because we need to be
-			# able to make two "initialize the cipher"
-			# calls, one with the cipher and key, and
-			# one with the IV, and, as of OpenSSL 1.1,
-			# You Can't Do That with EVP_DecryptInit(),
-			# because a call to EVP_DecryptInit() will
-			# unconditionally clear the context, and
-			# if you don't supply a cipher, it'll
-			# clear the cipher, rendering the context
-			# unusable and causing a crash.
-			#
-			AC_CHECK_FUNCS(EVP_CIPHER_CTX_new EVP_DecryptInit_ex)
+	if test -z "$libcrypto_root"; then
+		#
+		# No.
+		#
+		# First, try looking for it with pkg-config, if we have it.
+		#
+		# Homebrew's pkg-config does not, by default, look for
+		# pkg-config files for packages it has installed.
+		# Furthermore, at least for OpenSSL, they appear to be
+		# dumped in package-specific directories whose paths are
+		# not only package-specific but package-version-specific.
+		#
+		# So the only way to find openssl is to get the value of
+		# PKG_CONFIG_PATH from "brew --env openssl" and add that
+		# to PKG_CONFIG_PATH.  (No, we can't just assume it's under
+		# /usr/local; Homebrew have conveniently chosen to put it
+		# under /opt/homebrew on ARM.)
+		#
+		# That's the nice thing about Homebrew - it makes things easier!
+		# Thanks!
+		#
+		save_PKG_CONFIG_PATH="$PKG_CONFIG_PATH"
+		if test -n "$BREW"; then
+			openssl_pkgconfig_dir=`$BREW --env --plain openssl | sed -n 's/PKG_CONFIG_PATH: //p'`
+			PKG_CONFIG_PATH="$openssl_pkgconfig_dir:$PKG_CONFIG_PATH"
 		fi
-	])
+		PKG_CHECK_MODULE(LIBCRYPTO, libcrypto,
+		    [
+			#
+			# We found OpenSSL/libressl libcrypto.
+			#
+			HAVE_LIBCRYPTO=yes
+		    ])
+		PKG_CONFIG_PATH="$save_PKG_CONFIG_PATH"
+
+		#
+		# If it wasn't found, and we have Homebrew installed, see
+		# if it's in Homebrew.
+		#
+		if test "x$HAVE_LIBCRYPTO" != "xyes" -a -n "$BREW"; then
+			AC_MSG_CHECKING(for openssl in Homebrew)
+			#
+			# The brew man page lies when it speaks of
+			# $BREW --prefix --installed <formula>
+			# outputting nothing.  In Homebrew 3.3.16,
+			# it produces output regardless of whether
+			# the formula is installed or not, so we
+			# send the standard output and error to
+			# the bit bucket.
+			#
+			# libcrypto isn't a formula, openssl is a formula.
+			#
+			if $BREW --prefix --installed openssl >/dev/null 2>&1; then
+				#
+				# Yes.  Get the include directory and library
+				# directory.  (No, we can't just assume it's
+				# under /usr/local; Homebrew have conveniently
+				# chosen to put it under /opt/homebrew on ARM.)
+				#
+				AC_MSG_RESULT(yes)
+				HAVE_LIBCRYPTO=yes
+				openssl_path=`$BREW --prefix openssl`
+				LIBCRYPTO_CFLAGS="-I$openssl_path/include"
+				LIBCRYPTO_LIBS="-L$openssl_path/lib -lcrypto"
+			else
+				AC_MSG_RESULT(no)
+			fi
+		fi
+
+		#
+		# If it wasn't found, and /usr/local/include and /usr/local/lib
+		# exist, check if it's in /usr/local.  (We check whether they
+		# exist because, if they don't exist, the compiler will warn
+		# about that and then ignore the argument, so they test
+		# using just the system header files and libraries.)
+		#
+		# We include the standard include file to 1) make sure that
+		# it's installed (if it's just a shared library for the
+		# benefit of existing programs, that's not useful) and 2)
+		# because SSL_library_init() is a library routine in some
+		# versions and a #defined wrapper around OPENSSL_init_ssl()
+		# in others.
+		#
+		if test "x$HAVE_LIBCRYPTO" != "xyes" -a -d "/usr/local/include" -a -d "/usr/local/lib"; then
+			AC_LBL_SAVE_CHECK_STATE
+			CFLAGS="$CFLAGS -I/usr/local/include"
+			LIBS="$LIBS -L/usr/local/lib -lcrypto"
+			AC_MSG_CHECKING(whether we have an OpenSSL/libressl libcrypto in /usr/local that we can use)
+			AC_LINK_IFELSE([AC_LANG_PROGRAM(
+			    [[
+#include <openssl/evp.h>
+			    ]],
+			    [[
+EVP_CIPHER_CTX_block_size((EVP_CIPHER_CTX *)0);
+return 0;
+			    ]])],
+			    [
+				AC_MSG_RESULT(yes)
+				HAVE_LIBCRYPTO=yes
+				LIBCRYPTO_CFLAGS="-I/usr/local/include"
+				LIBCRYPTO_LIBS="-L/usr/local/lib -lcrypto"
+			    ],
+			    AC_MSG_RESULT(no))
+			AC_LBL_RESTORE_CHECK_STATE
+		fi
+
+		#
+		# If it wasn't found, check if it's a system library.
+		#
+		# We include the standard include file to 1) make sure that
+		# it's installed (if it's just a shared library for the
+		# benefit of existing programs, that's not useful) and 2)
+		# make sure this isn't a newer macOS that provides libcrypto
+		# as a shared library but doesn't provide headers - Apple,
+		# bless their pointy little heads, apparently ship libcrypto
+		# as a library, but not the header files, in El Capitan and
+		# later, probably because they don't want you writing nasty
+		# portable code that could run on other UN*Xes, they want you
+		# writing code that uses their Shiny New Crypto Library and
+		# that thus only runs on macOS.
+		#
+		if test "x$HAVE_LIBCRYPTO" != "xyes"; then
+			AC_LBL_SAVE_CHECK_STATE
+			LIBS="$LIBS -lcrypto"
+			AC_MSG_CHECKING(whether we have a system OpenSSL/libressl that we can use)
+			AC_LINK_IFELSE([AC_LANG_PROGRAM(
+			    [[
+#include <openssl/evp.h>
+			    ]],
+			    [[
+EVP_CIPHER_CTX_block_size((EVP_CIPHER_CTX *)0);
+return 0;
+			    ]])],
+			    [
+				AC_MSG_RESULT(yes)
+				HAVE_LIBCRYPTO=yes
+				LIBCRYPTO_LIBS="-lcrypto"
+			    ],
+			    AC_MSG_RESULT(no))
+			AC_LBL_RESTORE_CHECK_STATE
+		fi
+	else
+		#
+		# Yes.
+		#
+		# Look for it there.
+		#
+		AC_LBL_SAVE_CHECK_STATE
+		CFLAGS="$CFLAGS -I$libcrypto_root/include"
+		LIBS="$LIBS -L$libcrypto_root/lib -lcrypto"
+		AC_MSG_CHECKING(whether we have a system OpenSSL/libressl that we can use)
+		AC_LINK_IFELSE([AC_LANG_PROGRAM(
+		    [[
+#include <openssl/evp.h>
+		    ]],
+		    [[
+EVP_CIPHER_CTX_block_size((EVP_CIPHER_CTX *)0);
+return 0;
+		    ]])],
+		    [
+			AC_MSG_RESULT(yes)
+			HAVE_LIBCRYPTO=yes
+			LIBCRYPTO_CFLAGS="-I$libcrypto_root/include"
+			LIBCRYPTO_LIBS="-L$libcrypto_root/lib -lcrypto"
+		    ],
+		    AC_MSG_RESULT(no))
+		AC_LBL_RESTORE_CHECK_STATE
+	fi
+
+	#
+	# OK, did we find it?
+	#
+	if test "x$HAVE_LIBCRYPTO" = "xyes"; then
+		AC_DEFINE([HAVE_LIBCRYPTO], [1], [Define to 1 if you have a usable `crypto' library (-lcrypto).])
+
+		#
+		# Put the subdirectories of the libcrypto root directory
+		# at the end of the header and library search path, to
+		# make sure they come after any -I or -L flags for
+		# a local libpcap - those must take precedence of any
+		# directory that might contain an installed version of
+		# libpcap.
+		#
+		V_INCLS="$V_INCLS $LIBCRYPTO_CFLAGS"
+		LIBS="$LIBS $LIBCRYPTO_LIBS"
+
+		#
+		# OK, then:
+		#
+		# 1) do we have EVP_CIPHER_CTX_new?
+		# If so, we use it to allocate an EVP_CIPHER_CTX, as
+		# EVP_CIPHER_CTX may be opaque; otherwise, we allocate it
+		# ourselves.
+		#
+		# 2) do we have EVP_DecryptInit_ex()?
+		# If so, we use it, because we need to be able to make
+		# two "initialize the cipher" calls, one with the cipher
+		# and key, and one with the IV, and, as of OpenSSL 1.1,
+		# You Can't Do That with EVP_DecryptInit(), because a
+		# call to EVP_DecryptInit() will unconditionally clear
+		# the context, and if you don't supply a cipher, it'll
+		# clear the cipher, rendering the context unusable and
+		# causing a crash.
+		#
+		AC_CHECK_FUNCS(EVP_CIPHER_CTX_new EVP_DecryptInit_ex)
+	else
+		AC_MSG_NOTICE(OpenSSL/libressl libcrypto not found)
+	fi
 fi
 
 # Check for libcap-ng

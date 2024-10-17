@@ -23,6 +23,8 @@
 
 #include <config.h>
 
+#include <limits.h>
+
 #include "netdissect-stdinc.h"
 
 #define ND_LONGJMP_FROM_TCHECK
@@ -45,6 +47,24 @@ struct pf_addr {
 #define v6	pfa.v6
 };
 
+/*
+ * This header is:
+ *
+ *    61 bytes long on NetBSD, DragonFly BSD. and Darwin;
+ *    84 bytes lon on OpenBSD;
+ *    72 bytes long on FreeBSD;
+ *
+ * which, unfortunately, does not allow us to distinguish, based on
+ * the header length, between the three OSes listed as having 61-byte
+ * headers.  As the action values differ between them, this makes it
+ * impossible to correctly dissect the reason values that differ
+ * between NetBSD and Darwin (reason value 15) without having some
+ * way to explicitly tell tcpdump what to do.
+ *
+ * (We could, I guess, label reason value 15 as
+ * "state-locked (NetBSD)/dummynet (macOS etc.)" or something such as
+ * that.)
+ */
 struct pfloghdr {
 	nd_uint8_t	length;
 	nd_uint8_t	af;
@@ -59,7 +79,11 @@ struct pfloghdr {
 	nd_uint32_t	rule_uid;
 	nd_int32_t	rule_pid;
 	nd_uint8_t	dir;
-/* Minimum header length (without padding): 61 */
+/*
+ * This is the minimum pflog header length; it includes none of
+ * the fields added either by OpenBSD or FreeBSD, and doesn't
+ * include any padding.
+ */
 #define MIN_PFLOG_HDRLEN 61
 #if defined(__OpenBSD__)
 	nd_uint8_t	rewritten;
@@ -155,6 +179,7 @@ static const struct tok pf_reasons[] = {
 #define PF_SYNPROXY_DROP	10
 #if defined(__FreeBSD__)
 #define PF_DEFER		11
+#define PF_MATCH		12
 #elif defined(__OpenBSD__)
 #define PF_DEFER		11
 #define PF_MATCH		12
@@ -172,6 +197,7 @@ static const struct tok pf_actions[] = {
 	{ PF_PASS,		"pass" },
 	{ PF_DROP,		"block" },
 	{ PF_SCRUB,		"scrub" },
+	{ PF_NOSCRUB,		"noscrub" },
 	{ PF_NAT,		"nat" },
 	{ PF_NONAT,		"nonat" },
 	{ PF_BINAT,		"binat" },
@@ -181,6 +207,7 @@ static const struct tok pf_actions[] = {
 	{ PF_SYNPROXY_DROP,	"synproxy-drop" },
 #if defined(__FreeBSD__)
 	{ PF_DEFER,		"defer" },
+	{ PF_MATCH,		"match" },
 #elif defined(__OpenBSD__)
 	{ PF_DEFER,		"defer" },
 	{ PF_MATCH,		"match" },
@@ -220,10 +247,16 @@ static void
 pflog_print(netdissect_options *ndo, const struct pfloghdr *hdr)
 {
 	uint32_t rulenr, subrulenr;
+#if defined(__FreeBSD__)
+	uint32_t ridentifier;
+#endif
 
 	ndo->ndo_protocol = "pflog";
 	rulenr = GET_BE_U_4(hdr->rulenr);
 	subrulenr = GET_BE_U_4(hdr->subrulenr);
+#if defined(__FreeBSD__)
+	ridentifier = GET_BE_U_4(hdr->ridentifier);
+#endif
 	if (subrulenr == (uint32_t)-1)
 		ND_PRINT("rule %u/", rulenr);
 	else {
@@ -232,8 +265,21 @@ pflog_print(netdissect_options *ndo, const struct pfloghdr *hdr)
 		ND_PRINT(".%u/", subrulenr);
 	}
 
-	ND_PRINT("%s: %s %s on ",
-	    tok2str(pf_reasons, "unkn(%u)", GET_U_1(hdr->reason)),
+	ND_PRINT("%s", tok2str(pf_reasons, "unkn(%u)", GET_U_1(hdr->reason)));
+
+	/*
+	 * All bits set means that the UID shouldn't be printed.
+	 * That's UINT_MAX if signed, or -1 if unsigned.
+	 */
+	if (GET_BE_U_4(hdr->uid) != UINT_MAX)
+		ND_PRINT(" [uid %u]", GET_BE_U_4(hdr->uid));
+
+#if defined(__FreeBSD__)
+	if (ridentifier != 0)
+		ND_PRINT(" [ridentifier %u]", ridentifier);
+#endif
+
+	ND_PRINT(": %s %s on ",
 	    tok2str(pf_actions, "unkn(%u)", GET_U_1(hdr->action)),
 	    tok2str(pf_directions, "unkn(%u)", GET_U_1(hdr->dir)));
 	nd_printjnp(ndo, (const u_char*)hdr->ifname, PFLOG_IFNAMSIZ);

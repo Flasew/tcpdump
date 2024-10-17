@@ -1,6 +1,7 @@
 env:
   CIRRUS_CLONE_DEPTH: 3 # The internal git client reads CIRRUS_CLONE_DEPTH.
   LIBPCAP_GIT: https://github.com/the-tcpdump-group/libpcap.git
+  AUTOCONF_WARNINGS: no-obsolete
 
 freebsd_task:
   name: freebsd-amd64
@@ -10,7 +11,7 @@ freebsd_task:
     # The number of CPU cores must be either 1 or a multiple of 2.
     cpu: 1
     memory: 2G
-    image_family: freebsd-13-3
+    image_family: freebsd-13-4
   env:
     IGNORE_OSVERSION: yes
     MATRIX_CC: clang17 gcc13
@@ -31,13 +32,14 @@ linux_task:
     # The number of CPU cores must be either 1 or a multiple of 2.
     cpu: 1
     memory: 1G
-    image: ubuntu:22.04
+    image: ubuntu:24.04
   env:
     DEBIAN_FRONTEND: noninteractive
     LANG: C
   script:
     - apt-get -qy update >/dev/null
     - apt-get -qy install autoconf make gcc libpcap-dev >/dev/null # for "./configure"
+    - apt-get -qy install flex bison libdbus-1-dev libbluetooth-dev libnl-genl-3-dev libibverbs-dev >/dev/null # for libpcap
     - apt-get -qy install cmake git binutils-dev >/dev/null # for "make releasecheck"
     - apt-get -qy install shellcheck >/dev/null
     - ./autogen.sh
@@ -66,10 +68,10 @@ coverity_task:
   container:
     cpu: 1
     memory: 2G
-    image: ubuntu:22.04
+    image: ubuntu:24.04
   env:
     DEBIAN_FRONTEND: noninteractive
-    MAKEFLAGS: -j 5
+    LANG: C
     COVERITY_SCAN_PROJECT_NAME: $CIRRUS_REPO_FULL_NAME
     COVERITY_SCAN_TOKEN: ENCRYPTED[1b6f994cabfe74267ce2dce81fd9e49f694e9cfe69fb99f7d1580907bec1266efd7b38df3a47ccab53d5af98636f8e9c]
     COVERITY_SCAN_BUILD_COMMAND_PREPEND: ./configure --enable-instrument-functions --enable-smb

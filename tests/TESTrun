@@ -39,8 +39,12 @@ mkpath($newdir);
 mkpath($diffdir);
 my $origdir = getcwd();
 my $srcdir  = $ENV{'srcdir'} || ".";
-# Default to unified diff and allow to fall back to basic diff if necessary.
-my $diff_flags = defined $ENV{'DIFF_FLAGS'} ? $ENV{'DIFF_FLAGS'} : '-u';
+# Default to unified context diff (on HP-UX diff does not support it, so
+# default to the closest alternative) and allow to fall back to another diff
+# format if necessary.
+my $diff_flags = defined $ENV{'DIFF_FLAGS'} ? $ENV{'DIFF_FLAGS'} :
+	$^O eq 'hpux' ? '-c' :
+	'-u';
 
 #
 # Force UTC, so time stamps are printed in a standard time zone, and
@@ -66,6 +70,7 @@ unshift(@INC, $testsdir);
 
 $passedcount = 0;
 $failedcount = 0;
+$skippedcount = 0;
 #
 my $failureoutput=$origdir . "/tests/failure-outputs.txt";
 
@@ -385,6 +390,17 @@ sub loadconfighash {
     printf "$TCPDUMP --fp-type => %s\n", $have_fptype;
     $main::confighhash->{$have_fptype} = 1;
 
+    # run tcpdump --time-t-size to get the size of size_t in bits
+    open(TIMETSIZE_PIPE, "$TCPDUMP --time-t-size |") or die("piping tcpdump --time-t-size failed\n");
+    my $time_t_size = <TIMETSIZE_PIPE>;
+    close(TIMETSIZE_PIPE);
+    my $have_time_t_64;
+    if($time_t_size == "64") {
+        $have_time_t_64 = "HAVE_TIME_T_64";
+    }
+    printf "$TCPDUMP --time-t-size => %s\n", $time_t_size;
+    $main::confighhash->{$have_time_t_64} = 1;
+
     # and check whether this is OpenBSD, as one test fails in OpenBSD
     # due to the sad hellscape of low-numbered DLT_ values, due to
     # 12 meaning "OpenBSD loopback" rather than "raw IP" on OpenBSD
@@ -420,11 +436,13 @@ sub runOneComplexTest {
 
     if(!$foundit) {
         printf "    %-40s: skipped (%s not set)\n", $name, $configset;
+        $skippedcount++;
         return 0;
     }
 
     if(!$unfoundit) {
         printf "    %-40s: skipped (%s set)\n", $name, $configunset;
+        $skippedcount++;
         return 0;
     }
 
@@ -509,6 +527,7 @@ if(scalar(@ARGV) == 0) {
 
 # exit with number of failing tests.
 print "------------------------------------------------\n";
+printf("%4u tests skipped\n",$skippedcount);
 printf("%4u tests failed\n",$failedcount);
 printf("%4u tests passed\n",$passedcount);
 

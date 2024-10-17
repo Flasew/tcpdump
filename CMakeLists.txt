@@ -131,6 +131,80 @@ project(tcpdump C)
 set(SIZEOF_VOID_P "${CMAKE_SIZEOF_VOID_P}")
 
 #
+# Show the bit width for which we're compiling.
+# This can help debug problems if you're dealing with a compiler that
+# defaults to generating 32-bit code even when running on a 64-bit
+# platform, and where that platform may provide only 64-bit versions of
+# libraries that we might use (looking at *you*, Oracle Studio!).
+#
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+  message(STATUS "Building 32-bit")
+elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
+  message(STATUS "Building 64-bit")
+endif()
+
+#
+# Solaris pkg-config is annoying.  For at least one package (D-Bus, I'm
+# looking at *you*!), there are separate include files for 32-bit and
+# 64-bit builds (I guess using "unsigned long long" as a 64-bit integer
+# type on a 64-bit build is like crossing the beams or something), and
+# there are two separate .pc files, so if we're doing a 32-bit build we
+# should make sure we look in /usr/lib/pkgconfig for .pc files and if
+# we're doing a 64-bit build we should make sure we look in
+# /usr/lib/amd64/pkgconfig for .pc files.
+#
+if(CMAKE_SYSTEM_NAME STREQUAL "SunOS" AND CMAKE_SYSTEM_VERSION MATCHES "5[.][0-9.]*")
+    #
+    # Note: string(REPLACE) does not appear to support using ENV{...}
+    # as an argument, so we set a variable and then use set() to set
+    # the environment variable.
+    #
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        #
+        # 64-bit build.  If /usr/lib/pkgconfig appears in the path,
+        # prepend /usr/lib/amd64/pkgconfig to it; otherwise,
+        # put /usr/lib/amd64 at the end.
+        #
+        if((NOT DEFINED ENV{PKG_CONFIG_PATH}) OR "$ENV{PKG_CONFIG_PATH}" EQUAL "")
+            #
+            # Not set, or empty.  Set it to /usr/lib/amd64/pkgconfig.
+            #
+            set(fixed_path "/usr/lib/amd64/pkgconfig")
+        elseif("$ENV{PKG_CONFIG_PATH}" MATCHES "/usr/lib/pkgconfig")
+            #
+            # It contains /usr/lib/pkgconfig.  Prepend
+            # /usr/lib/amd64/pkgconfig to /usr/lib/pkgconfig.
+            #
+            string(REPLACE "/usr/lib/pkgconfig"
+                "/usr/lib/amd64/pkgconfig:/usr/lib/pkgconfig"
+                fixed_path "$ENV{PKG_CONFIG_PATH}")
+        else()
+            #
+            # Not empty, but doesn't contain /usr/lib/pkgconfig.
+            # Append /usr/lib/amd64/pkgconfig to it.
+            #
+            set(fixed_path "$ENV{PKG_CONFIG_PATH}:/usr/lib/amd64/pkgconfig")
+        endif()
+        set(ENV{PKG_CONFIG_PATH} "${fixed_path}")
+    elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
+        #
+        # 32-bit build.  If /usr/amd64/lib/pkgconfig appears in the path,
+        # prepend /usr/lib/pkgconfig to it.
+        #
+        if("$ENV{PKG_CONFIG_PATH}" MATCHES "/usr/lib/amd64/pkgconfig")
+            #
+            # It contains /usr/lib/amd64/pkgconfig.  Prepend
+            # /usr/lib/pkgconfig to /usr/lib/amd64/pkgconfig.
+            #
+            string(REPLACE "/usr/lib/amd64/pkgconfig"
+                "/usr/lib/pkgconfig:/usr/lib/amd64/pkgconfig"
+                fixed_path "$ENV{PKG_CONFIG_PATH}")
+            set(ENV{PKG_CONFIG_PATH} "${fixed_path}")
+        endif()
+    endif()
+endif()
+
+#
 # For checking if a compiler flag works and adding it if it does.
 #
 include(CheckCCompilerFlag)
@@ -318,6 +392,28 @@ if(MSVC)
    endif (USE_STATIC_RT)
 endif(MSVC)
 
+#
+# CMake's definition of "cross-compiling" appears to be "compiling
+# for an *operating system* other than the one on which the build
+# is being done*.
+#
+# This is an inadequate definition, as people build for the same
+# operating system but a different instruction set, e.g. building
+# on an IA-32 or x86-64 Linux box for an Arm embedded Linux box,
+# or building Arm code on an IA-32 or x86-64 Windows box.
+#
+# At least for the Windows case, people may do those builds by
+# setting the target with th -A flag to CMake; that causes
+# CMAKE_GENERATOR_PLATFORM to be set to the target.  If
+# CMAKE_GENERATOR_PLATFORM is set, compare it with
+# CMAKE_HOST_SYSTEM_PROCESSOR and, if they're not equal, set
+# CMAKE_CROSSCOMPILING to TRUE.
+#
+if (CMAKE_GENERATOR_PLATFORM AND
+    NOT CMAKE_GENERATOR_PLATFORM STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR)
+    set(CMAKE_CROSSCOMPILING TRUE)
+endif()
+
 ###################################################################
 #   Detect available platform features
 ###################################################################
@@ -417,56 +513,60 @@ else(STDLIBS_HAVE_GETSERVENT)
 endif(STDLIBS_HAVE_GETSERVENT)
 cmake_pop_check_state()
 
-#
-# Require a proof of suitable snprintf(3), same as in Autoconf.
-#
-include(CheckCSourceRuns)
-check_c_source_runs("
-#include <stdio.h>
-#include <string.h>
-#include <inttypes.h>
-#include <sys/types.h>
+if (NOT CMAKE_CROSSCOMPILING)
+    #
+    # Require a proof of suitable snprintf(3), same as in Autoconf.
+    #
+    include(CheckCSourceRuns)
+    check_c_source_runs("
+    #include <stdio.h>
+    #include <string.h>
+    #include <inttypes.h>
+    #include <sys/types.h>
 
-int main()
-{
-  char buf[100];
-  uint64_t t = (uint64_t)1 << 32;
+    int main()
+    {
+      char buf[100];
+      uint64_t t = (uint64_t)1 << 32;
 
-  snprintf(buf, sizeof(buf), \"%zu\", sizeof(buf));
-  if (strncmp(buf, \"100\", sizeof(buf)))
-    return 1;
+      snprintf(buf, sizeof(buf), \"%zu\", sizeof(buf));
+      if (strncmp(buf, \"100\", sizeof(buf)))
+        return 1;
 
-  snprintf(buf, sizeof(buf), \"%zd\", -sizeof(buf));
-  if (strncmp(buf, \"-100\", sizeof(buf)))
-    return 2;
+      snprintf(buf, sizeof(buf), \"%zd\", -sizeof(buf));
+      if (strncmp(buf, \"-100\", sizeof(buf)))
+        return 2;
 
-  snprintf(buf, sizeof(buf), \"%\" PRId64, -t);
-  if (strncmp(buf, \"-4294967296\", sizeof(buf)))
-    return 3;
+      snprintf(buf, sizeof(buf), \"%\" PRId64, -t);
+      if (strncmp(buf, \"-4294967296\", sizeof(buf)))
+        return 3;
 
-  snprintf(buf, sizeof(buf), \"0o%\" PRIo64, t);
-  if (strncmp(buf, \"0o40000000000\", sizeof(buf)))
-    return 4;
+      snprintf(buf, sizeof(buf), \"0o%\" PRIo64, t);
+      if (strncmp(buf, \"0o40000000000\", sizeof(buf)))
+        return 4;
 
-  snprintf(buf, sizeof(buf), \"0x%\" PRIx64, t);
-  if (strncmp(buf, \"0x100000000\", sizeof(buf)))
-    return 5;
+      snprintf(buf, sizeof(buf), \"0x%\" PRIx64, t);
+      if (strncmp(buf, \"0x100000000\", sizeof(buf)))
+        return 5;
 
-  snprintf(buf, sizeof(buf), \"%\" PRIu64, t);
-  if (strncmp(buf, \"4294967296\", sizeof(buf)))
-    return 6;
+      snprintf(buf, sizeof(buf), \"%\" PRIu64, t);
+      if (strncmp(buf, \"4294967296\", sizeof(buf)))
+        return 6;
 
-  return 0;
-}
+      return 0;
+    }
 
-"
-    SUITABLE_SNPRINTF
-)
-if(NOT SUITABLE_SNPRINTF)
-    message(FATAL_ERROR
+    "
+        SUITABLE_SNPRINTF
+    )
+    if(NOT SUITABLE_SNPRINTF)
+        message(FATAL_ERROR
 "The snprintf(3) implementation in this libc is not suitable,
 tcpdump would not work correctly even if it managed to compile."
-    )
+        )
+    endif()
+else()
+    message(STATUS "Skipped SUITABLE_SNPRINTF because cross-compiling.")
 endif()
 
 check_function_exists(getopt_long HAVE_GETOPT_LONG)
@@ -713,7 +813,56 @@ check_function_exists(pcap_set_tstamp_precision HAVE_PCAP_SET_TSTAMP_PRECISION)
 #
 check_function_exists(pcap_set_immediate_mode HAVE_PCAP_SET_IMMEDIATE_MODE)
 check_function_exists(pcap_dump_ftell64 HAVE_PCAP_DUMP_FTELL64)
-check_function_exists(pcap_open HAVE_PCAP_OPEN)
+#
+# macOS Sonoma's libpcap includes stub versions of the remote-
+# capture APIs.  They are exported as "weakly linked symbols".
+#
+# Xcode 15 offers only a macOS Sonoma SDK, which has a .tbd
+# file for libpcap that claims it includes those APIs.  (Newer
+# versions of macOS don't provide the system shared libraries,
+# they only provide the dyld shared cache containing those
+# libraries, so the OS provides SDKs that include a .tbd file
+# to use when linking.)
+#
+# This means that check_function_exists() will think that
+# the remote-capture APIs are present, including pcap_open()
+# and pcap_findalldevs_ex().
+#
+# However, they are *not* present in macOS Ventura and earlier,
+# which means that building on Ventura with Xcode 15 produces
+# executables that fail to start because one of those APIs
+# isn't found in the system libpcap.
+#
+# Protecting calls to those APIs with __builtin_available()
+# does not prevent this, because the libpcap header files
+# in the Sonoma SDK mark them as being first available
+# in macOS 10.13, just like all the other routines introduced
+# in libpcap 1.9, even though they're only available if libpcap
+# is built with remote capture enabled or stub routines are
+# provided.  (A fix to enable this has been checked into the
+# libpcap repository, and may end up in a later version of
+# the SDK.)
+#
+# Given all that, and given that the versions of the
+# remote-capture APIs in Sonoma are stubs that always fail,
+# there doesn't seem to be any point in checking for pcap_open()
+# and pcap_findalldevs_ex() if we're linking against the Apple libpcap.
+#
+# However, if we're *not* linking against the Apple libpcap,
+# we should check for it, so that we can use it if it's present.
+#
+# So we check for pcap_open() and pcap_findalldevs_ex() if 1) this isn't
+# macOS or 2) the the libpcap we found is not a system library, meaning
+# that its path begins neither with /usr/lib (meaning it's a system
+# dylib) nor /Application/Xcode.app (meaning it's a file in
+# the Xcode SDK).
+#
+if(NOT APPLE OR NOT
+   (PCAP_LIBRARIES MATCHES "/usr/lib/.*" OR
+    PCAP_LIBRARIES MATCHES "/Application/Xcode.app/.*"))
+    check_function_exists(pcap_open HAVE_PCAP_OPEN)
+    check_function_exists(pcap_findalldevs_ex HAVE_PCAP_FINDALLDEVS_EX)
+endif()
 
 #
 # On Windows, check for pcap_wsockinit(); if we don't have it, check for
@@ -779,11 +928,6 @@ endif(WITH_SMI)
 if(WITH_CRYPTO)
     find_package(CRYPTO)
     if(CRYPTO_FOUND)
-        #
-        # Check for some headers and functions.
-        #
-        check_include_file(openssl/evp.h HAVE_OPENSSL_EVP_H)
-
         #
         # 1) do we have EVP_CIPHER_CTX_new?
         # If so, we use it to allocate an EVP_CIPHER_CTX, as
@@ -1273,6 +1417,9 @@ source_group("Header Files" FILES ${PROJECT_SOURCE_LIST_H})
 add_executable(tcpdump ${TCPDUMP_SOURCE_LIST_C})
 if(NOT C_ADDITIONAL_FLAGS STREQUAL "")
     set_target_properties(tcpdump PROPERTIES COMPILE_FLAGS ${C_ADDITIONAL_FLAGS})
+endif()
+if(NOT "${PCAP_LINK_FLAGS}" STREQUAL "")
+    set_target_properties(tcpdump PROPERTIES LINK_FLAGS ${PCAP_LINK_FLAGS})
 endif()
 target_link_libraries(tcpdump netdissect ${TCPDUMP_LINK_LIBRARIES})
 

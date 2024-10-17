@@ -641,6 +641,7 @@ show_remote_devices_and_exit(void)
 #define OPTION_COUNT			136
 #define OPTION_PRINT_SAMPLING		137
 #define OPTION_LENGTHS			138
+#define OPTION_TIME_T_SIZE		139
 
 static const struct option longopts[] = {
 	{ "buffer-size", required_argument, NULL, 'B' },
@@ -682,6 +683,7 @@ static const struct option longopts[] = {
 	{ "print", no_argument, NULL, OPTION_PRINT },
 	{ "print-sampling", required_argument, NULL, OPTION_PRINT_SAMPLING },
 	{ "lengths", no_argument, NULL, OPTION_LENGTHS },
+	{ "time-t-size", no_argument, NULL, OPTION_TIME_T_SIZE },
 	{ "version", no_argument, NULL, OPTION_VERSION },
 	{ NULL, 0, NULL, 0 }
 };
@@ -1096,7 +1098,7 @@ parse_interface_number(const char *device)
 			/*
 			 * No, it's not an ordinal.
 			 */
-			error("Invalid adapter index");
+			error("Invalid adapter index %s", device);
 		}
 		return (devnum);
 	} else {
@@ -1171,8 +1173,11 @@ _U_
 	for (i = 0, dev = devlist; i < devnum-1 && dev != NULL;
 	    i++, dev = dev->next)
 		;
-	if (dev == NULL)
-		error("Invalid adapter index");
+	if (dev == NULL) {
+		pcap_freealldevs(devlist);
+		error("Invalid adapter index %ld: only %ld interfaces found",
+		    devnum, i);
+	}
 	device = strdup(dev->name);
 	pcap_freealldevs(devlist);
 	return (device);
@@ -1431,6 +1436,42 @@ main(int argc, char **argv)
 
 	netdissect_options Ndo;
 	netdissect_options *ndo = &Ndo;
+
+#ifdef _WIN32
+	/*
+	 * We need to look for wpcap.dll in \Windows\System32\Npcap first,
+	 * as either:
+	 *
+	 *  1) WinPcap isn't installed and Npcap isn't installed in "WinPcap
+	 *     API-compatible Mode", so there's no wpcap.dll in
+	 *     \Windows\System32, only in \Windows\System32\Npcap;
+	 *
+	 *  2) WinPcap is installed and Npcap isn't installed in "WinPcap
+	 *     API-compatible Mode", so the wpcap.dll in \Windows\System32
+	 *     is a WinPcap DLL, but we'd prefer an Npcap DLL (we should
+	 *     work with either one if we're configured against WinPcap,
+	 *     and we'll probably require Npcap if we're configured against
+	 *     it), and that's in \Windows\System32\Npcap;
+	 *
+	 *  3) Npcap is installed in "WinPcap API-compatible Mode", so both
+	 *     \Windows\System32 and \Windows\System32\Npcap have an Npcap
+	 *     wpcap.dll.
+	 *
+	 * Unfortunately, Windows has no notion of an rpath, so we can't
+	 * set the rpath to include \Windows\System32\Npcap at link time;
+	 * what we need to do is to link wpcap as a delay-load DLL and
+	 * add \Windows\System32\Npcap to the DLL search path early in
+	 * main() with a call to SetDllDirectory().
+	 *
+	 * The same applies to packet.dll.
+	 *
+	 * We add \Windows\System32\Npcap here.
+	 *
+	 * See https://npcap.com/guide/npcap-devguide.html#npcap-feature-native-dll-implicitly
+	 */
+	if (!SetDllDirectoryA("C:\\Windows\\System32\\Npcap"))
+		error("SetDllDirectory failed");
+#endif
 
 	/*
 	 * Initialize the netdissect code.
@@ -1866,6 +1907,10 @@ main(int argc, char **argv)
 		case OPTION_LENGTHS:
 			ndo->ndo_lengths = 1;
 			break;
+
+		case OPTION_TIME_T_SIZE:
+			printf("%zu\n", sizeof(time_t) * 8);
+			return 0;
 
 		case OPTION_VERSION:
 			print_version(stdout);
