@@ -74,7 +74,8 @@ extern const struct tok tcp_flag_values[];
 #define	TCPOPT_SACKOK		4	/* selective ack ok (rfc2018) */
 #define	TCPOPT_SACK		5	/* selective ack (rfc2018) */
 #define	TCPOPT_ECHO		6	/* echo (rfc1072) */
-#define	TCPOPT_ECHOREPLY	7	/* echo (rfc1072) */
+#define	TCPOPT_ECHOREPLY	35	/* echo (rfc1072) */ // fuckoff
+#define TCPOPT_CKPTSEQ 7
 #define TCPOPT_TIMESTAMP	8	/* timestamp (rfc1323) */
 #define    TCPOLEN_TIMESTAMP		10
 #define    TCPOLEN_TSTAMP_APPA		(TCPOLEN_TIMESTAMP+2) /* appendix A */

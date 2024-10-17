@@ -123,7 +123,7 @@ static const struct tok tcp_option_values[] = {
         { TCPOPT_SACKOK, "sackOK" },
         { TCPOPT_SACK, "sack" },
         { TCPOPT_ECHO, "echo" },
-        { TCPOPT_ECHOREPLY, "echoreply" },
+        { TCPOPT_CKPTSEQ, "ckptseq" },
         { TCPOPT_TIMESTAMP, "TS" },
         { TCPOPT_CC, "cc" },
         { TCPOPT_CCNEW, "ccnew" },
@@ -134,6 +134,7 @@ static const struct tok tcp_option_values[] = {
         { TCPOPT_TCPAO, "tcp-ao" },
         { TCPOPT_MPTCP, "mptcp" },
         { TCPOPT_FASTOPEN, "tfo" },
+        { TCPOPT_ECHOREPLY, "echoreply" },
         { TCPOPT_EXPERIMENT2, "exp" },
         { 0, NULL }
 };
@@ -524,6 +525,17 @@ tcp_print(netdissect_options *ndo,
                                 datalen = 4;
                                 LENCHECK(datalen);
                                 ND_PRINT(" %u", GET_BE_U_4(cp));
+                                break;
+
+                        case TCPOPT_CKPTSEQ:
+                                datalen = 4;
+                                LENCHECK(datalen);
+                                if (GET_BE_S_4(cp) == -1) {
+                                        ND_PRINT(" cseq INVALID");
+                                }
+                                else {
+                                        ND_PRINT(" cseq %u:%u", GET_BE_U_4(cp), GET_BE_U_4(cp) + length);
+                                }
                                 break;
 
                         case TCPOPT_TIMESTAMP:
